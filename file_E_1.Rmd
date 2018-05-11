@@ -1,0 +1,2074 @@
+Tuberculosis
+------------
+
+
+
+
+Upload needed packages
+```{r}
+# install.packages("gmodels")
+library(gmodels)
+
+# install.packages("caTools")
+library(caTools)
+
+# install.packages("MASS")
+library(MASS)
+
+# install.packages("glmnet")
+library(glmnet)
+
+# install.packages("randomForest")
+library(randomForest)
+
+# install.packages("e1071")
+library(e1071)
+
+# install.packages("pROC")
+library(pROC)
+
+# install.packages("mice")
+library(mice)
+```
+
+
+
+
+Upload dataset
+```{r}
+TB <- read.csv("D:\\HST936 Global Health Informatics\\Project\\Data\\full_Published Cases with Imaging_20180228.csv", header = TRUE)
+```
+
+
+
+
+Remove duplicate entries from the same patient
+```{r}
+# Database dimensions
+dim(TB)
+
+# Remove duplicate entries from the same patient
+TB <- TB[!duplicated(TB$patient_id), ]
+
+# Database dimensions
+dim(TB)
+```
+
+
+
+
+Outcome: Treatment failure
+```{r}
+# Treatment failure
+TB$trtfailure[TB$outcome == "completed" | TB$outcome == "cured" | TB$outcome == "still_on_treatment"] <- 0
+TB$trtfailure[TB$outcome == "failure" | TB$outcome == "death" | TB$outcome == "default" | TB$outcome == "died"] <- 1
+TB$trtfailure <- as.factor(TB$trtfailure)
+
+# Eliminate patients with NAs in the outcome (TB$outcome unknown or not reported)
+TB <- TB[!(is.na(TB$trtfailure) == TRUE), ]
+
+#Distribution of treatment failure
+CrossTable(TB$trtfailure)
+```
+
+
+
+
+Predictors
+```{r}
+# Country
+CrossTable(TB$country)
+TB$country <- as.factor(TB$country)
+
+# Age
+summary(TB$age_of_onset)
+TB$age_of_onset <- as.numeric(TB$age_of_onset)
+
+# Sex
+CrossTable(TB$gender)
+TB$gender <- as.factor(TB$gender)
+
+# Education
+CrossTable(TB$education)
+TB$education <- as.factor(TB$education)
+
+# Employment
+CrossTable(TB$employment)
+TB$employment <- as.factor(TB$employment)
+
+# Number of daily contacts
+summary(TB$number_of_daily_contacts)
+TB$number_of_daily_contacts <- as.numeric(TB$number_of_daily_contacts)
+
+# Type of resistance
+CrossTable(TB$type_of_resistance)
+TB$type_of_resistance <- as.factor(TB$type_of_resistance)
+
+# BMI
+summary(TB$bmi)
+TB$bmi <- as.numeric(TB$bmi)
+
+# Localization of the lesion in the lung
+CrossTable(TB$lung_localization)
+TB$lung_localization <- as.factor(TB$lung_localization)
+
+# Count of xrays
+summary(TB$x_ray_count)
+TB$bmi <- as.numeric(TB$x_ray_count)
+
+# Count of CT scans
+summary(TB$ct_count)
+TB$ct_count <- as.numeric(TB$ct_count)
+
+# Dissemination
+CrossTable(TB$dissemination)
+TB$dissemination <- as.factor(TB$dissemination)
+
+# Lung cavity size
+CrossTable(TB$lungcavity_size)
+TB$lungcavity_size <- as.factor(TB$lungcavity_size)
+
+# Affect pleura
+CrossTable(TB$affect_pleura)
+TB$affect_pleura <- as.factor(TB$affect_pleura)
+
+# Shadow pattern
+CrossTable(TB$shadow_pattern)
+TB$shadow_pattern <- as.factor(TB$shadow_pattern)
+
+# Pneumothorax
+CrossTable(TB$pneumothorax)
+TB$pneumothorax <- as.factor(TB$pneumothorax)
+
+# Pleuritis
+CrossTable(TB$plevritis)
+TB$plevritis <- as.factor(TB$plevritis)
+
+# Node calcinosis
+CrossTable(TB$nodicalcinatum)
+TB$nodicalcinatum <- as.factor(TB$nodicalcinatum)
+
+# Process prevalence
+CrossTable(TB$process_prevalence)
+TB$process_prevalence <- as.factor(TB$process_prevalence)
+
+# Decrease in lung capacity
+CrossTable(TB$lung_capacity_decrease)
+TB$lung_capacity_decrease <- as.factor(TB$lung_capacity_decrease)
+
+# Caverna
+CrossTable(TB$totalcavernum)
+TB$totalcavernum <- as.factor(TB$totalcavernum)
+
+# Culture
+CrossTable(TB$culture)
+TB$culture <- as.factor(TB$culture)
+
+# Microscopy
+CrossTable(TB$microscopy)
+TB$microscopy <- as.factor(TB$microscopy)
+
+# Social risk factors
+CrossTable(TB$social_risk_factors)
+TB$social_risk_factors <- as.factor(TB$social_risk_factors)
+
+# Treatment 
+CrossTable(TB$regimen_drug)
+TB$regimen_drug <- as.factor(TB$regimen_drug)
+```
+
+
+
+
+Keep only the variables of interest
+```{r}
+# Variables of interest
+TB <- TB[ , c("trtfailure", "country", "age_of_onset", "gender", "education", 
+              "employment", "number_of_daily_contacts", "type_of_resistance", "bmi", "lung_localization",
+              "x_ray_count", "ct_count", "dissemination", "lungcavity_size", 
+              "affect_pleura", "shadow_pattern", "pneumothorax", "plevritis", "nodicalcinatum",
+              "process_prevalence", "lung_capacity_decrease", "totalcavernum",
+              "culture", "microscopy", "social_risk_factors", "regimen_drug")]
+```
+
+
+
+
+Create a database with imputed values for treatment failure for the multiple imputation analysis and keep only complete cases for the complete case analysis
+```{r}
+# Create a database imputing the missing values of treatment failure with multiple imputation
+temp <- mice(TB, m = 10, maxit = 50, meth = 'pmm', seed = 500)
+summary(temp)
+TBimputed <- complete(temp, 1)
+TBimputed
+
+
+# Keep only complete cases for the complete case analysis
+TB <- TB[which(complete.cases(TB) == TRUE), ]
+```
+
+
+
+
+
+
+
+
+COMPLETE CASE ANALYSIS
+----------------------
+
+
+
+
+Split the database into 70% training and 30% testing
+----------------------------------------------------
+The patients in the database are randomly split into 70% training set and 30% testing set. To keep results reproducible, I fix the seed to a fixed arbitrary number.
+```{r}
+# Set the seed to a fixed arbitrary number
+set.seed(2)
+
+# Divide data into train and test sets
+sample <- sample.split(TB$trtfailure, SplitRatio = 0.7)
+TBtrain <- subset(TB, sample == TRUE)
+TBtest  <- subset(TB, sample == FALSE)
+```
+
+
+
+
+Basic demographics
+------------------
+Basic description of the dataset
+```{r}
+# Dimensions of the dataset
+dim(TB)
+dim(TBtrain)
+dim(TBtest)
+
+# Distribution of treatment failure in the datasets
+CrossTable(TB$trtfailure)
+CrossTable(TBtrain$trtfailure)
+CrossTable(TBtest$trtfailure)
+
+# Age
+summary(TB$age_of_onset)
+summary(TBtrain$age_of_onset)
+summary(TBtest$age_of_onset)
+
+# Sex
+CrossTable(TB$gender)
+CrossTable(TBtrain$gender)
+CrossTable(TBtest$gender)
+
+# Country
+CrossTable(TB$country)
+CrossTable(TBtrain$country)
+CrossTable(TBtest$country)
+```
+
+
+
+
+TRAINING PHASE: HERE I DEVELOP MODELS ONLY ON THE TRAINING SUBSET
+-----------------------------------------------------------------
+
+
+
+
+Forward stepwise selection
+--------------------------
+Automatic variable selection with forward stepwise selection starting with the empty model (model with no predictors). The criterion for selection is the Akaike Information Criterion (AIC), which rewards more predictive models but also penalizes more complex models to minimize overfitting.
+```{r}
+## Forward stepwise selection
+forward <- stepAIC(glm(trtfailure ~ 1, family = binomial, data = TBtrain), 
+                   scope = list(lower = ~ 1, upper = ~ country + age_of_onset + gender + education + 
+                                  employment + number_of_daily_contacts + type_of_resistance + bmi +
+                                  lung_localization + x_ray_count + ct_count + dissemination + 
+                                  lungcavity_size + lungcavity_size + affect_pleura + shadow_pattern + 
+                                  pneumothorax + plevritis + nodicalcinatum + process_prevalence +
+                                  lung_capacity_decrease + totalcavernum + 
+                                  culture + microscopy + social_risk_factors + regimen_drug), direction = "forward", trace = 0)
+summary(forward)
+```
+
+
+
+
+
+
+Backward stepwise elimination
+-----------------------------
+Automatic variable selection with backward stepwise selection starting with the full model (model with all predictors). The criterion for selection is the Akaike Information Criterion (AIC), which rewards more predictive models but also penalizes more complex models to minimize overfitting.
+```{r}
+## Backward selection
+backward <- stepAIC(glm(trtfailure ~ ., family = binomial, data = TBtrain), 
+                    scope = list(lower = ~ 1, upper = ~. + country + age_of_onset + gender + education + 
+                                  employment + number_of_daily_contacts + type_of_resistance + bmi +
+                                  lung_localization + x_ray_count + ct_count + dissemination + 
+                                  lungcavity_size + lungcavity_size + affect_pleura + shadow_pattern + 
+                                  pneumothorax + plevritis + nodicalcinatum + process_prevalence +
+                                  lung_capacity_decrease + totalcavernum + 
+                                  culture + microscopy + social_risk_factors + regimen_drug), 
+                    direction = "backward", trace = 0)
+summary(backward)
+```
+
+
+
+
+Stepwise selection with both backward elimination and forward selection
+-----------------------------------------------------------------------
+Automatic variable selection with both backward elimination and forward selection starting with the full model (model with all predictors). The criterion for selection is the Akaike Information Criterion (AIC), which rewards more predictive models but also penalizes more complex models to minimize overfitting.
+```{r}
+## Both forward and backward
+both <- stepAIC(glm(trtfailure ~ ., family = binomial, data = TBtrain), 
+                scope = list(lower = ~ 1, upper = ~. + country + age_of_onset + gender + education + 
+                                  employment + number_of_daily_contacts + type_of_resistance + bmi +
+                                  lung_localization + x_ray_count + ct_count + dissemination + 
+                                  lungcavity_size + lungcavity_size + affect_pleura + shadow_pattern + 
+                                  pneumothorax + plevritis + nodicalcinatum + process_prevalence +
+                                  lung_capacity_decrease + totalcavernum + 
+                                  culture + microscopy + social_risk_factors + regimen_drug), direction = "both", trace = 0)
+summary(both)
+```
+
+
+
+
+
+Lasso
+-----
+The Lasso model puts a penalty for more complex models and shrinks predictors with coefficients close to 0 to being 0. Therefore, the resulting model is sparse (has as few predictors as possible while maintaining a good predictive power) and, therefore, more interpretable.
+```{r}
+## Create the x matrix
+x <- model.matrix(trtfailure ~ ., data = TBtrain)[ , -which(names(TBtrain) %in% "trtfailure")]
+
+## Create the y vector
+y <- TBtrain$trtfailure
+
+## Create a grid of lambda values
+grid <- 10 ^ seq(0.01, -2, length = 100)
+
+## Fit the Lasso model with unknown value for lambda
+lassogrid <- glmnet(x, y, family = "binomial", alpha = 1, lambda = grid, 
+                    standardize = TRUE)
+plot(lassogrid, xvar="lambda", xlab = "Logarithm of lambda", 
+     ylab = "Value of the coefficients")
+
+## Set a seed with an arbitrary number
+set.seed(11)
+
+## Calculate the best value for lambda using cross validation
+cvlasso <- cv.glmnet(x, y, family = "binomial", alpha = 1, nfold = 3)
+plot(cvlasso, xlab = "Logarithm of lambda", ylab = "Binomial deviance")
+
+## Determine the best lambda value
+bestlambda <- cvlasso$lambda.min
+bestlambda
+
+## Fit the Lasso model with the lambda value that minimizes error (deviance)
+lasso <- glmnet(x, y, family = "binomial", alpha = 1, lambda = bestlambda, 
+                standardize = TRUE)
+
+## Lasso model
+lassocoefficients <- predict (lasso, type = "coefficients", s = bestlambda)
+lassocoefficients
+
+## Sparse LASSO model
+lassosparse <- glmnet(x, y, family = "binomial", alpha = 1, lambda = cvlasso$lambda.1se, 
+                standardize = TRUE)
+
+## Lasso model
+lassosparsecoefficients <- predict (lassosparse, type = "coefficients", s = cvlasso$lambda.1se)
+lassosparsecoefficients
+```
+
+
+
+
+
+
+
+Random forests
+--------------
+Random forests fit several decorrelated decision trees to the data and "average" them so that the resulting model has as little bias and as little variance as possible. Decorrelated trees refer to the fact that in each decision node the variables to perform the next branch of each tree are only a subset of number mtry of the available variables ensuring that the individual trees are heterogeneous and capture the variability in the data.
+```{r}
+## Set a seed with an arbitrary number
+set.seed(23)
+
+## Divide the training set into 3 folds
+folds <- sample(rep(1:3, length = nrow(TBtrain)))
+
+## Make sure folds have more or less the same size
+table(folds)
+
+## Find the random forest model with best mtry (number of variables 
+##considered in each decision node)
+## Vector with different values for mtry from 1 to 19 (number of variables)
+mtryvalues <- 1:18
+
+## Set a seed with an arbitrary number
+set.seed(9)
+
+## Set an empty data frame with the proportion misclassified 
+##(rows will be different mtry, and columns values of k) 
+proportionerror <- data.frame(matrix(0, ncol = 3, nrow = 18))
+colnames(proportionerror) <- c("k = 1", "k = 2", "k = 3")
+
+## Calculate the best mtry by cross-validation
+## Create a loop with 3 folds
+for (k in 1 : 3) {
+  ## Create a loop with 18 values of mtry
+for (j in 1 : 18) {
+  ## Calculate the random forest model based on 2 of the folds
+forest <- randomForest(trtfailure ~ ., data = TBtrain[folds != k, ], 
+                       mtry = mtryvalues[j], ntree = 1000, importance = TRUE)
+## Predict performance on the remaining fold not used for fitting the model
+prediction <- predict(forest, newdata = TBtrain[folds == k, 
+                                                       - which(names(TBtrain) == "trtfailure")])
+## Confusion matrix for the prediction
+confusionmatrix <- table(prediction, TBtrain[folds 
+                                                    == k, which(names(TBtrain) == "trtfailure")])
+## Misclassification error
+proportionerror[j, k] <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + 
+     confusionmatrix[2, 1] + confusionmatrix[2, 2])
+}
+}
+
+## Calculate the mean prediction error for each mtry
+proportionerror$meanerror <- rowMeans(proportionerror)
+
+## Plot the proportion of errors in relation with the number of variables in mtry
+plot(mtryvalues, proportionerror$meanerror, pch = 16, cex = 2, 
+     col = "red", type = "o", lwd = 2,
+     xlab = "Number of variables used at each node", 
+     ylab = "Misclassification in the fold not used for developing the model")
+
+## Identify the lowest mtry within 1 standard error of the mtry with minimum error
+mtryminimumerror <- which(proportionerror$meanerror 
+                          == min(proportionerror$meanerror))[1]
+
+## Calculate the definitive random forest in the full training set with the minimum error value of mtry
+forest <- randomForest(trtfailure ~ ., data = TBtrain, 
+                       mtry = mtryminimumerror, ntree = 1000, importance = TRUE)
+forest
+varImpPlot(forest, main = 
+             "Variables sorted by importance based on mean decrease accuracy and on mean decreased Gini")
+```
+
+
+
+
+Support vector machines: linear kernel
+--------------------------------------
+Support vector machines divide the observations by creating a boundary between the classes. As the observations might not be separable in their original dimension space, support vector machines separate the observations in a higher dimensional space that is visited through a kernel. 
+```{r}
+## Set a seed with an arbitrary number
+set.seed(33)
+
+## Support vector machine with a radial kernel tune best model using 3 fold cross-validation
+svmparameterslinear <- tune(svm, trtfailure ~ ., data = TBtrain, 
+                            kernel = "linear", 
+                            ranges = list(cost = seq(0.01, 2, 0.05)),
+                      tunecontrol = tune.control(cross = 3), 
+                      scale = TRUE, probability = TRUE)
+
+## Parameters for the best model
+svmparameterslinear
+
+## Select the best model
+svmlinear <- svmparameterslinear$best.model
+svmlinear
+```
+
+
+
+
+Support vector machines: polynomial kernel
+------------------------------------------
+```{r}
+## Set a seed with an arbitrary number
+set.seed(52)
+
+## Support vector machine with a polynomial kernel tune best model using 3 fold cross-validation
+svmparameterspolynomial <- tune(svm, trtfailure ~ ., data = TBtrain, 
+                            kernel = "polynomial", 
+                            ranges = list(cost = seq(0.01, 2, 0.05),
+                                          degree = seq(1, 6, 1)),
+                      tunecontrol = tune.control(cross = 3), 
+                      scale = TRUE, probability = TRUE)
+
+## Parameters for the best model
+svmparameterspolynomial
+
+## Select the best model
+svmpolynomial <- svmparameterspolynomial$best.model
+svmpolynomial
+```
+
+
+
+
+
+
+
+
+
+TESTING THE PERFORMANCE OF THE DIFFERENT METHODS IN THE TESTING SET
+-------------------------------------------------------------------
+
+
+
+
+Forward stepwise selection
+--------------------------
+```{r}
+## Prediction based on area under the curve
+predictionforward <- predict(forward, type = "response", 
+                             newdata = TBtest[ , - which(names(TBtest) == "trtfailure")])
+aucforward <- auc(TBtest$trtfailure, predictionforward)
+aucforward
+ciforward <- ci.auc(TBtest$trtfailure, predictionforward)
+ciforward
+
+## Prediction based on misclassification error
+predictionforward01 <- ifelse(predictionforward > 0.5, 1, 0)
+predictionforward01 <- as.factor(predictionforward01)
+confusionmatrix <- table(predictionforward01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationforward <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforward
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforward
+specificityforward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforward
+ppvforward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforward
+npvforward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforward
+
+## Calculate optimal threshold with Youden's index
+rocforward <- roc(TBtest$trtfailure, predictionforward)
+bestforward <- coords(rocforward, "b", ret = "threshold", best.method = "youden")
+bestforward
+
+## Prediction based on misclassification error
+predictionforwardyouden01 <- ifelse(predictionforward > bestforward, 1, 0)
+predictionforwardyouden01 <- as.factor(predictionforwardyouden01)
+confusionmatrix <- table(predictionforwardyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationforwardyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforwardyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforwardyouden
+specificityforwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforwardyouden
+ppvforwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforwardyouden
+npvforwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforwardyouden
+```
+
+
+
+
+Backward stepwise elimination
+-----------------------------
+```{r}
+## Prediction based on area under the curve
+predictionbackward <- predict(backward, type = "response", 
+                              newdata = TBtest[ , - which(names(TBtest) == "trtfailure")])
+aucbackward <- auc(TBtest$trtfailure, predictionbackward)
+aucbackward
+cibackward <- ci.auc(TBtest$trtfailure, predictionbackward)
+cibackward
+
+## Prediction based on misclassification error
+predictionbackward01 <- ifelse(predictionbackward > 0.5, 1, 0)
+predictionbackward01 <- as.factor(predictionbackward01)
+confusionmatrix <- table(predictionbackward01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationbackward <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationbackward
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitybackward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitybackward
+specificitybackward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitybackward
+ppvbackward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvbackward
+npvbackward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvbackward
+
+## Calculate optimal threshold with Youden's index
+rocbackward <- roc(TBtest$trtfailure, predictionbackward)
+bestbackward <- coords(rocbackward, "b", ret = "threshold", best.method = "youden")
+
+## Prediction based on misclassification error
+predictionbackwardyouden01 <- ifelse(predictionbackward > bestbackward[1], 1, 0)
+predictionbackwardyouden01 <- as.factor(predictionbackwardyouden01)
+confusionmatrix <- table(predictionbackwardyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationbackwardyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationbackwardyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitybackwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitybackwardyouden
+specificitybackwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitybackwardyouden
+ppvbackwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvbackwardyouden
+npvbackwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvbackwardyouden
+```
+
+
+
+
+Stepwise selection with both backward elimination and forward selection
+-----------------------------------------------------------------------
+```{r}
+## Prediction based on area under the curve
+predictionboth <- predict(both, type = "response", newdata = 
+                            TBtest[ , - which(names(TBtest) == "trtfailure")])
+aucboth <- auc(TBtest$trtfailure, predictionboth)
+aucboth
+ciboth <- ci.auc(TBtest$trtfailure, predictionboth)
+ciboth
+
+## Prediction based on misclassification error
+predictionboth01 <- ifelse(predictionboth > 0.5, 1, 0)
+predictionboth01 <- as.factor(predictionboth01)
+confusionmatrix <- table(predictionboth01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationboth <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationboth
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityboth <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityboth
+specificityboth <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityboth
+ppvboth <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvboth
+npvboth <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvboth
+
+## Calculate optimal threshold with Youden's index
+rocboth <- roc(TBtest$trtfailure, predictionboth)
+bestboth <- coords(rocboth, "b", ret = "threshold", best.method = "youden")
+bestboth
+
+## Prediction based on misclassification error
+predictionbothyouden01 <- ifelse(predictionboth > bestboth[1], 1, 0)
+predictionbothyouden01 <- as.factor(predictionbothyouden01)
+confusionmatrix <- table(predictionbothyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationbothyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationbothyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitybothyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitybothyouden
+specificitybothyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitybothyouden
+ppvbothyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvbothyouden
+npvbothyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvbothyouden
+```
+
+
+
+
+
+Lasso
+-----
+```{r}
+## Prediction based on area under the curve
+## Create the x matrix
+x <- model.matrix(trtfailure ~ ., data = TBtest)[ , -which(names(TBtest) %in% "trtfailure")]
+## Create the y vector
+y <- TBtest$trtfailure
+## Lasso predictions
+predictionlasso <- predict(lasso, newx = x, type = "response")
+predictionlasso <- as.numeric(predictionlasso)
+## Area under the curve
+auclasso <- auc(TBtest$trtfailure, predictionlasso)
+auclasso
+cilasso <- ci.auc(TBtest$trtfailure, predictionlasso)
+cilasso
+
+## Prediction based on misclassification error
+predictionlasso01 <- ifelse(predictionlasso > 0.5, 1, 0)
+predictionlasso01 <- as.factor(predictionlasso01)
+confusionmatrix <- table(predictionlasso01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationlasso <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationlasso
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitylasso <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitylasso
+specificitylasso <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitylasso
+ppvlasso <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvlasso
+npvlasso <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvlasso
+
+## Calculate optimal threshold with Youden's index
+roclasso <- roc(TBtest$trtfailure, predictionlasso)
+bestlasso <- coords(roclasso, "b", ret = "threshold", best.method = "youden")
+bestlasso
+
+## Prediction based on misclassification error
+predictionlassoyouden01 <- ifelse(predictionlasso > bestlasso, 1, 0)
+predictionlassoyouden01 <- as.factor(predictionlassoyouden01)
+confusionmatrix <- table(predictionlassoyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationlassoyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationlassoyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitylassoyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitylassoyouden
+specificitylassoyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitylassoyouden
+ppvlassoyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvlassoyouden
+npvlassoyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvlassoyouden
+```
+
+
+
+
+
+Random Forests
+--------------
+```{r}
+## Prediction based on area under the curve
+predictionforest <- predict(forest, type = "prob", newdata = 
+                              TBtest[ , - which(names(TBtest) == "trtfailure")])[ , 2]
+aucforest <- auc(TBtest$trtfailure, predictionforest)
+aucforest
+ciforest <- ci.auc(TBtest$trtfailure, predictionforest)
+ciforest
+
+## Prediction based on misclassification error
+predictionforest01 <- predict(forest, 
+                              newdata = TBtest[ , - which(names(TBtest) == "trtfailure")])
+confusionmatrix <- table(predictionforest01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationforest <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforest
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforest <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforest
+specificityforest <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforest
+ppvforest <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforest
+npvforest <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforest
+
+## Calculate optimal threshold with Youden's index
+rocforest <- roc(TBtest$trtfailure, predictionforest)
+bestforest <- coords(rocforest, "b", ret = "threshold", best.method = "youden")
+bestforest
+
+## Prediction based on misclassification error
+predictionforestyouden01 <- ifelse(predictionforest > bestforest, 1, 0)
+predictionforestyouden01 <- as.factor(predictionforestyouden01)
+confusionmatrix <- table(predictionforestyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationforestyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforestyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforestyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforestyouden
+specificityforestyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforestyouden
+ppvforestyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforestyouden
+npvforestyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforestyouden
+```
+
+
+
+
+Support vector machines: linear kernel
+--------------------------------------
+```{r}
+## Prediction based on area under the curve
+predictionsvmlinear <- predict(svmlinear, probability = TRUE, 
+                               newdata = TBtest[ , - which(names(TBtest) == "trtfailure")]) 
+predictionsvmlinear <- attr(predictionsvmlinear, "probabilities")[ , 2]
+aucsvmlinear <- auc(TBtest$trtfailure, predictionsvmlinear)
+aucsvmlinear
+cisvmlinear <- ci.auc(TBtest$trtfailure, predictionsvmlinear)
+cisvmlinear
+
+## Prediction based on misclassification error
+predictionsvmlinear01 <- predict(svmlinear, 
+                                 newdata = TBtest[ , - which(names(TBtest) == "trtfailure")])
+confusionmatrix <- table(predictionsvmlinear01, TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationsvmlinear <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmlinear
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmlinear <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmlinear
+specificitysvmlinear <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmlinear
+ppvsvmlinear <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmlinear
+npvsvmlinear <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmlinear
+
+## Calculate optimal threshold with Youden's index
+rocsvmlinear <- roc(TBtest$trtfailure, predictionsvmlinear)
+bestsvmlinear <- coords(rocsvmlinear, "b", ret = "threshold", best.method = "youden")
+bestsvmlinear
+
+## Prediction based on misclassification error
+predictionsvmlinearyouden01 <- ifelse(predictionsvmlinear > bestsvmlinear, 1, 0)
+predictionsvmlinearyouden01 <- as.factor(predictionsvmlinearyouden01)
+confusionmatrix <- table(predictionsvmlinearyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationsvmlinearyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmlinearyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmlinearyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmlinearyouden
+specificitysvmlinearyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmlinearyouden
+ppvsvmlinearyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmlinearyouden
+npvsvmlinearyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmlinearyouden
+```
+
+
+
+
+Support vector machines: polynomial kernel
+------------------------------------------
+```{r}
+## Prediction based on area under the curve
+predictionsvmpolynomial <- predict(svmpolynomial, 
+                                   probability = TRUE, 
+                                   newdata = TBtest[ , - which(names(TBtest) == "trtfailure")]) 
+predictionsvmpolynomial <- attr(predictionsvmpolynomial, "probabilities")[ , 2]
+aucsvmpolynomial <- auc(TBtest$trtfailure, predictionsvmpolynomial)
+aucsvmpolynomial
+cisvmpolynomial <- ci.auc(TBtest$trtfailure, predictionsvmpolynomial)
+cisvmpolynomial
+
+## Prediction based on misclassification error
+predictionsvmpolynomial01 <- predict(svmpolynomial, 
+                                     newdata = TBtest[ , - which(names(TBtest) == "trtfailure")])
+confusionmatrix <- table(predictionsvmpolynomial01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationsvmpolynomial <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmpolynomial
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmpolynomial <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmpolynomial
+specificitysvmpolynomial <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmpolynomial
+ppvsvmpolynomial <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmpolynomial
+npvsvmpolynomial <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmpolynomial
+
+## Calculate optimal threshold with Youden's index
+rocsvmpolynomial <- roc(TBtest$trtfailure, predictionsvmpolynomial)
+bestsvmpolynomial <- coords(rocsvmpolynomial, "b", ret = "threshold", best.method = "youden")
+bestsvmpolynomial
+
+## Prediction based on misclassification error
+predictionsvmpolynomialyouden01 <- ifelse(predictionsvmpolynomial > bestsvmpolynomial, 1, 0)
+predictionsvmpolynomialyouden01 <- as.factor(predictionsvmpolynomialyouden01)
+confusionmatrix <- table(predictionsvmpolynomialyouden01, 
+                         TBtest[ , which(names(TBtest) == "trtfailure")])
+misclassificationsvmpolynomialyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmpolynomialyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmpolynomialyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmpolynomialyouden
+specificitysvmpolynomialyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmpolynomialyouden
+ppvsvmpolynomialyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmpolynomialyouden
+npvsvmpolynomialyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmpolynomialyouden
+```
+
+
+
+
+FINAL RESULTS
+--------------------------------------
+```{r}
+## Model names
+modelnames <- c("Forward", 
+                "Backward", "Forward and backward", "Lasso", "Random Forest", 
+                "SVM linear", "SVM polynomial")
+
+## Outcome names
+outcomenames <- c("AUC", "AUC 95%CI: lower", "AUC 95%CI: upper", 
+                  "Misclassification", 
+                  "Sensitivity", "Specificity", "PPV", "NPV")
+
+## Model area under the curve
+modelauc <- c(aucforward, 
+              aucbackward, aucboth, auclasso, aucforest, aucsvmlinear, 
+              aucsvmpolynomial)
+
+## Model confidence interval for area under the curve: lower
+modelcilower <- c(ciforward[1], cibackward[1], ciboth[1], cilasso[1], ciforest[1], 
+                  cisvmlinear[1], cisvmpolynomial[1])
+
+## Model confidence interval for area under the curve: upper
+modelciupper <- c(ciforward[3], cibackward[3], ciboth[3], cilasso[3], ciforest[3], 
+                  cisvmlinear[3], cisvmpolynomial[3])
+
+
+## Model misclassification error
+modelmisclassification <- c(misclassificationforward, misclassificationbackward, 
+                            misclassificationboth, misclassificationlasso, 
+                            misclassificationforest, misclassificationsvmlinear, 
+                            misclassificationsvmpolynomial)
+
+## Model sensitivity
+modelsensitivity <- c(sensitivityforward, sensitivitybackward, sensitivityboth, 
+                      sensitivitylasso, sensitivityforest, sensitivitysvmlinear, 
+                      sensitivitysvmpolynomial)
+
+## Model specificity
+modelspecificity <- c(specificityforward, 
+                      specificitybackward, specificityboth, specificitylasso, specificityforest, 
+                      specificitysvmlinear, specificitysvmpolynomial)
+
+## Model positive predictive value
+modelppv <- c(ppvforward, ppvbackward, ppvboth, ppvlasso, 
+              ppvforest, ppvsvmlinear, ppvsvmpolynomial)
+
+## Negative predictive value
+modelnpv <- c(npvforward, npvbackward, npvboth, npvlasso, 
+              npvforest, npvsvmlinear, npvsvmpolynomial)
+
+## Final table
+results <- data.frame(modelauc, modelcilower, modelciupper,  
+                      modelmisclassification, modelsensitivity, modelspecificity, modelppv,
+                      modelnpv)
+rownames(results) <- modelnames
+colnames(results) <- outcomenames
+results
+
+## For improved graphs (remove dead space left & right)
+par(pty="s")
+
+## Area under the curve graph individual
+plot.roc(roc(TBtest$trtfailure, predictionforward), col = "blue", lwd = 3, 
+         main = "Comparison of AUC for the different models", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionbackward), col = "aquamarine4", lwd = 3, 
+         main = "AUC for the backward selection model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionboth), col = "darkolivegreen", lwd = 3, 
+         main = "AUC for the forward and backward selection model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionlasso), col = "orange", lwd = 3, 
+         main = "AUC for the Lasso model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionforest), col = "darkgreen", lwd = 3, 
+         main = "AUC for the random forest model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionsvmlinear), col = "red", lwd = 3, 
+         main = "AUC for the SVM linear model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionsvmpolynomial), col = "purple", lwd = 3, 
+         main = "AUC for the SVM polynomial model", xlab = "1 - Specificity", legacy.axes = TRUE)
+
+
+par(pty="s")
+plot.roc(roc(TBtest$trtfailure, predictionforward), col = "blue", lwd = 3, 
+         main = "Comparison of AUC for the different models", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBtest$trtfailure, predictionbackward), add = TRUE, 
+         col = "aquamarine4", lwd = 3)
+plot.roc(roc(TBtest$trtfailure, predictionboth), add = TRUE, 
+         col = "darkolivegreen", lwd = 3)
+plot.roc(roc(TBtest$trtfailure, predictionlasso), add = TRUE, 
+         col = "orange", lwd = 3)
+plot.roc(roc(TBtest$trtfailure, predictionforest), add = TRUE, 
+         col = "darkgreen", lwd = 3)
+plot.roc(roc(TBtest$trtfailure, predictionsvmlinear), add = TRUE, 
+         col = "red", lwd = 3)
+plot.roc(roc(TBtest$trtfailure, predictionsvmpolynomial), add = TRUE, 
+         col = "purple", lwd = 3)
+legend(x = "bottomright", legend = c("forward", "backward", "backward / forward", 
+                                     "lasso", "svm linear", "random forest", 
+                                     "svm polynomial"), 
+       lty = c(1, 1, 1, 1, 1, 1, 1), lwd = c(3, 3, 3, 3, 3, 3, 3),
+       col = c("blue", "aquamarine4", "darkolivegreen", "orange", "red", "darkgreen", "purple"))
+
+
+
+
+## Area under the curve graph smoothed
+par(pty="s")
+plot.roc(smooth(roc(TBtest$trtfailure, predictionforward)), col = "blue", lwd = 3, 
+         main = "Comparison of AUC for the different models", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(smooth(roc(TBtest$trtfailure, predictionbackward)), add = TRUE, 
+         col = "aquamarine4", lwd = 3)
+plot.roc(smooth(roc(TBtest$trtfailure, predictionboth)), add = TRUE, 
+         col = "darkolivegreen", lwd = 3)
+plot.roc(smooth(roc(TBtest$trtfailure, predictionlasso)), add = TRUE, 
+         col = "orange", lwd = 3)
+plot.roc(smooth(roc(TBtest$trtfailure, predictionforest)), add = TRUE, 
+         col = "darkgreen", lwd = 3)
+plot.roc(smooth(roc(TBtest$trtfailure, predictionsvmlinear)), add = TRUE, 
+         col = "red", lwd = 3)
+plot.roc(smooth(roc(TBtest$trtfailure, predictionsvmpolynomial)), add = TRUE, 
+         col = "purple", lwd = 3)
+legend(x = "bottomright", legend = c("forward", "backward", "backward / forward", 
+                                     "lasso", "svm linear", "random forest", 
+                                     "svm polynomial"), 
+       lty = c(1, 1, 1, 1, 1, 1, 1), lwd = c(3, 3, 3, 3, 3, 3, 3),
+       col = c("blue", "aquamarine4", "darkolivegreen", "orange", "red", "darkgreen", "purple"))
+```
+
+
+
+
+
+
+
+
+IMPUTED DATABASE ANALYSIS
+-------------------------
+
+
+
+
+Split the database into 70% training and 30% testing
+----------------------------------------------------
+The patients in the database are randomly split into 70% training set and 30% testing set. To keep results reproducible, I fix the seed to a fixed arbitrary number.
+```{r}
+# Set the seed to a fixed arbitrary number
+set.seed(2)
+
+# Divide data into train and test sets
+sample <- sample.split(TBimputed$trtfailure, SplitRatio = 0.7)
+TBimputedtrain <- subset(TBimputed, sample == TRUE)
+TBimputedtest  <- subset(TBimputed, sample == FALSE)
+```
+
+
+
+
+Basic demographics
+------------------
+Basic description of the dataset
+```{r}
+# Dimensions of the dataset
+dim(TBimputed)
+dim(TBimputedtrain)
+dim(TBimputedtest)
+
+# Distribution of treatment failure in the datasets
+CrossTable(TBimputed$trtfailure)
+CrossTable(TBimputedtrain$trtfailure)
+CrossTable(TBimputedtest$trtfailure)
+
+# Age
+summary(TBimputed$age_of_onset)
+summary(TBimputedtrain$age_of_onset)
+summary(TBimputedtest$age_of_onset)
+
+# Sex
+CrossTable(TBimputed$gender)
+CrossTable(TBimputedtrain$gender)
+CrossTable(TBimputedtest$gender)
+
+# Country
+CrossTable(TBimputed$country)
+CrossTable(TBimputedtrain$country)
+CrossTable(TBimputedtest$country)
+```
+
+
+
+
+TRAINING PHASE: HERE I DEVELOP MODELS ONLY ON THE TRAINING SUBSET
+-----------------------------------------------------------------
+
+
+
+
+Forward stepwise selection
+--------------------------
+Automatic variable selection with forward stepwise selection starting with the empty model (model with no predictors). The criterion for selection is the Akaike Information Criterion (AIC), which rewards more predictive models but also penalizes more complex models to minimize overfitting.
+```{r}
+## Forward stepwise selection
+forward <- stepAIC(glm(trtfailure ~ 1, family = binomial, data = TBimputedtrain), 
+                   scope = list(lower = ~ 1, upper = ~ country + age_of_onset + gender + education + 
+                                  employment + number_of_daily_contacts + type_of_resistance + bmi +
+                                  lung_localization + x_ray_count + ct_count + dissemination + 
+                                  lungcavity_size + lungcavity_size + affect_pleura + shadow_pattern + 
+                                  pneumothorax + plevritis + nodicalcinatum + process_prevalence +
+                                  lung_capacity_decrease + totalcavernum + 
+                                  culture + microscopy + social_risk_factors + regimen_drug), direction = "forward", trace = 0)
+summary(forward)
+```
+
+
+
+
+
+
+Backward stepwise elimination
+-----------------------------
+Automatic variable selection with backward stepwise selection starting with the full model (model with all predictors). The criterion for selection is the Akaike Information Criterion (AIC), which rewards more predictive models but also penalizes more complex models to minimize overfitting.
+```{r}
+## Backward selection
+backward <- stepAIC(glm(trtfailure ~ ., family = binomial, data = TBimputedtrain), 
+                    scope = list(lower = ~ 1, upper = ~. + country + age_of_onset + gender + education + 
+                                  employment + number_of_daily_contacts + type_of_resistance + bmi +
+                                  lung_localization + x_ray_count + ct_count + dissemination + 
+                                  lungcavity_size + lungcavity_size + affect_pleura + shadow_pattern + 
+                                  pneumothorax + plevritis + nodicalcinatum + process_prevalence +
+                                  lung_capacity_decrease + totalcavernum + 
+                                  culture + microscopy + social_risk_factors + regimen_drug), 
+                    direction = "backward", trace = 0)
+summary(backward)
+```
+
+
+
+
+Stepwise selection with both backward elimination and forward selection
+-----------------------------------------------------------------------
+Automatic variable selection with both backward elimination and forward selection starting with the full model (model with all predictors). The criterion for selection is the Akaike Information Criterion (AIC), which rewards more predictive models but also penalizes more complex models to minimize overfitting.
+```{r}
+## Both forward and backward
+both <- stepAIC(glm(trtfailure ~ ., family = binomial, data = TBimputedtrain), 
+                scope = list(lower = ~ 1, upper = ~. + country + age_of_onset + gender + education + 
+                                  employment + number_of_daily_contacts + type_of_resistance + bmi +
+                                  lung_localization + x_ray_count + ct_count + dissemination + 
+                                  lungcavity_size + lungcavity_size + affect_pleura + shadow_pattern + 
+                                  pneumothorax + plevritis + nodicalcinatum + process_prevalence +
+                                  lung_capacity_decrease + totalcavernum + 
+                                  culture + microscopy + social_risk_factors + regimen_drug), direction = "both", trace = 0)
+summary(both)
+```
+
+
+
+
+
+Lasso
+-----
+The Lasso model puts a penalty for more complex models and shrinks predictors with coefficients close to 0 to being 0. Therefore, the resulting model is sparse (has as few predictors as possible while maintaining a good predictive power) and, therefore, more interpretable.
+```{r}
+## Create the x matrix
+x <- model.matrix(trtfailure ~ ., data = TBimputedtrain)[ , -which(names(TBimputedtrain) %in% "trtfailure")]
+
+## Create the y vector
+y <- TBimputedtrain$trtfailure
+
+## Create a grid of lambda values
+grid <- 10 ^ seq(0.01, -2, length = 100)
+
+## Fit the Lasso model with unknown value for lambda
+lassogrid <- glmnet(x, y, family = "binomial", alpha = 1, lambda = grid, 
+                    standardize = TRUE)
+plot(lassogrid, xvar="lambda", xlab = "Logarithm of lambda", 
+     ylab = "Value of the coefficients")
+
+## Set a seed with an arbitrary number
+set.seed(11)
+
+## Calculate the best value for lambda using cross validation
+cvlasso <- cv.glmnet(x, y, family = "binomial", alpha = 1, nfold = 3)
+plot(cvlasso, xlab = "Logarithm of lambda", ylab = "Binomial deviance")
+
+## Determine the best lambda value
+bestlambda <- cvlasso$lambda.min
+bestlambda
+
+## Fit the Lasso model with the lambda value that minimizes error (deviance)
+lasso <- glmnet(x, y, family = "binomial", alpha = 1, lambda = bestlambda, 
+                standardize = TRUE)
+
+## Lasso model
+lassocoefficients <- predict (lasso, type = "coefficients", s = bestlambda)
+lassocoefficients
+
+## Sparse LASSO model
+lassosparse <- glmnet(x, y, family = "binomial", alpha = 1, lambda = cvlasso$lambda.1se, 
+                standardize = TRUE)
+
+## Lasso model
+lassosparsecoefficients <- predict (lassosparse, type = "coefficients", s = cvlasso$lambda.1se)
+lassosparsecoefficients
+```
+
+
+
+
+
+
+
+Random forests
+--------------
+Random forests fit several decorrelated decision trees to the data and "average" them so that the resulting model has as little bias and as little variance as possible. Decorrelated trees refer to the fact that in each decision node the variables to perform the next branch of each tree are only a subset of number mtry of the available variables ensuring that the individual trees are heterogeneous and capture the variability in the data.
+```{r}
+## Set a seed with an arbitrary number
+set.seed(23)
+
+## Divide the training set into 3 folds
+folds <- sample(rep(1:3, length = nrow(TBimputedtrain)))
+
+## Make sure folds have more or less the same size
+table(folds)
+
+## Find the random forest model with best mtry (number of variables 
+##considered in each decision node)
+## Vector with different values for mtry from 1 to 19 (number of variables)
+mtryvalues <- 1:18
+
+## Set a seed with an arbitrary number
+set.seed(9)
+
+## Set an empty data frame with the proportion misclassified 
+##(rows will be different mtry, and columns values of k) 
+proportionerror <- data.frame(matrix(0, ncol = 3, nrow = 18))
+colnames(proportionerror) <- c("k = 1", "k = 2", "k = 3")
+
+## Calculate the best mtry by cross-validation
+## Create a loop with 3 folds
+for (k in 1 : 3) {
+  ## Create a loop with 18 values of mtry
+for (j in 1 : 18) {
+  ## Calculate the random forest model based on 2 of the folds
+forest <- randomForest(trtfailure ~ ., data = TBimputedtrain[folds != k, ], 
+                       mtry = mtryvalues[j], ntree = 1000, importance = TRUE)
+## Predict performance on the remaining fold not used for fitting the model
+prediction <- predict(forest, newdata = TBimputedtrain[folds == k, 
+                                                       - which(names(TBimputedtrain) == "trtfailure")])
+## Confusion matrix for the prediction
+confusionmatrix <- table(prediction, TBimputedtrain[folds 
+                                                    == k, which(names(TBimputedtrain) == "trtfailure")])
+## Misclassification error
+proportionerror[j, k] <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + 
+     confusionmatrix[2, 1] + confusionmatrix[2, 2])
+}
+}
+
+## Calculate the mean prediction error for each mtry
+proportionerror$meanerror <- rowMeans(proportionerror)
+
+## Plot the proportion of errors in relation with the number of variables in mtry
+plot(mtryvalues, proportionerror$meanerror, pch = 16, cex = 2, 
+     col = "red", type = "o", lwd = 2,
+     xlab = "Number of variables used at each node", 
+     ylab = "Misclassification in the fold not used for developing the model")
+
+## Identify the lowest mtry within 1 standard error of the mtry with minimum error
+mtryminimumerror <- which(proportionerror$meanerror 
+                          == min(proportionerror$meanerror))[1]
+
+## Calculate the definitive random forest in the full training set with the minimum error value of mtry
+forest <- randomForest(trtfailure ~ ., data = TBimputedtrain, 
+                       mtry = mtryminimumerror, ntree = 1000, importance = TRUE)
+forest
+varImpPlot(forest, main = 
+             "Variables sorted by importance based on mean decrease accuracy and on mean decreased Gini")
+```
+
+
+
+
+Support vector machines: linear kernel
+--------------------------------------
+Support vector machines divide the observations by creating a boundary between the classes. As the observations might not be separable in their original dimension space, support vector machines separate the observations in a higher dimensional space that is visited through a kernel. 
+```{r}
+## Set a seed with an arbitrary number
+set.seed(33)
+
+## Support vector machine with a radial kernel tune best model using 3 fold cross-validation
+svmparameterslinear <- tune(svm, trtfailure ~ ., data = TBimputedtrain, 
+                            kernel = "linear", 
+                            ranges = list(cost = seq(0.01, 2, 0.05)),
+                      tunecontrol = tune.control(cross = 3), 
+                      scale = TRUE, probability = TRUE)
+
+## Parameters for the best model
+svmparameterslinear
+
+## Select the best model
+svmlinear <- svmparameterslinear$best.model
+svmlinear
+```
+
+
+
+
+Support vector machines: polynomial kernel
+------------------------------------------
+```{r}
+## Set a seed with an arbitrary number
+set.seed(52)
+
+## Support vector machine with a polynomial kernel tune best model using 3 fold cross-validation
+svmparameterspolynomial <- tune(svm, trtfailure ~ ., data = TBimputedtrain, 
+                            kernel = "polynomial", 
+                            ranges = list(cost = seq(0.01, 2, 0.05),
+                                          degree = seq(1, 6, 1)),
+                      tunecontrol = tune.control(cross = 3), 
+                      scale = TRUE, probability = TRUE)
+
+## Parameters for the best model
+svmparameterspolynomial
+
+## Select the best model
+svmpolynomial <- svmparameterspolynomial$best.model
+svmpolynomial
+```
+
+
+
+
+
+
+
+
+
+TESTING THE PERFORMANCE OF THE DIFFERENT METHODS IN THE TESTING SET
+-------------------------------------------------------------------
+
+
+
+
+Forward stepwise selection
+--------------------------
+```{r}
+## Prediction based on area under the curve
+predictionforward <- predict(forward, type = "response", 
+                             newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])
+aucforward <- auc(TBimputedtest$trtfailure, predictionforward)
+aucforward
+ciforward <- ci.auc(TBimputedtest$trtfailure, predictionforward)
+ciforward
+
+## Prediction based on misclassification error
+predictionforward01 <- ifelse(predictionforward > 0.5, 1, 0)
+predictionforward01 <- as.factor(predictionforward01)
+confusionmatrix <- table(predictionforward01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationforward <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforward
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforward
+specificityforward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforward
+ppvforward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforward
+npvforward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforward
+
+## Calculate optimal threshold with Youden's index
+rocforward <- roc(TBimputedtest$trtfailure, predictionforward)
+bestforward <- coords(rocforward, "b", ret = "threshold", best.method = "youden")
+bestforward
+
+## Prediction based on misclassification error
+predictionforwardyouden01 <- ifelse(predictionforward > bestforward, 1, 0)
+predictionforwardyouden01 <- as.factor(predictionforwardyouden01)
+confusionmatrix <- table(predictionforwardyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationforwardyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforwardyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforwardyouden
+specificityforwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforwardyouden
+ppvforwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforwardyouden
+npvforwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforwardyouden
+```
+
+
+
+
+Backward stepwise elimination
+-----------------------------
+```{r}
+## Prediction based on area under the curve
+predictionbackward <- predict(backward, type = "response", 
+                              newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])
+aucbackward <- auc(TBimputedtest$trtfailure, predictionbackward)
+aucbackward
+cibackward <- ci.auc(TBimputedtest$trtfailure, predictionbackward)
+cibackward
+
+## Prediction based on misclassification error
+predictionbackward01 <- ifelse(predictionbackward > 0.5, 1, 0)
+predictionbackward01 <- as.factor(predictionbackward01)
+confusionmatrix <- table(predictionbackward01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationbackward <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationbackward
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitybackward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitybackward
+specificitybackward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitybackward
+ppvbackward <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvbackward
+npvbackward <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvbackward
+
+## Calculate optimal threshold with Youden's index
+rocbackward <- roc(TBimputedtest$trtfailure, predictionbackward)
+besTBimputedackward <- coords(rocbackward, "b", ret = "threshold", best.method = "youden")
+besTBimputedackward
+
+## Prediction based on misclassification error
+predictionbackwardyouden01 <- ifelse(predictionbackward > besTBimputedackward, 1, 0)
+predictionbackwardyouden01 <- as.factor(predictionbackwardyouden01)
+confusionmatrix <- table(predictionbackwardyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationbackwardyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationbackwardyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitybackwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitybackwardyouden
+specificitybackwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitybackwardyouden
+ppvbackwardyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvbackwardyouden
+npvbackwardyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvbackwardyouden
+```
+
+
+
+
+Stepwise selection with both backward elimination and forward selection
+-----------------------------------------------------------------------
+```{r}
+## Prediction based on area under the curve
+predictionboth <- predict(both, type = "response", newdata = 
+                            TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])
+aucboth <- auc(TBimputedtest$trtfailure, predictionboth)
+aucboth
+ciboth <- ci.auc(TBimputedtest$trtfailure, predictionboth)
+ciboth
+
+## Prediction based on misclassification error
+predictionboth01 <- ifelse(predictionboth > 0.5, 1, 0)
+predictionboth01 <- as.factor(predictionboth01)
+confusionmatrix <- table(predictionboth01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationboth <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationboth
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityboth <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityboth
+specificityboth <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityboth
+ppvboth <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvboth
+npvboth <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvboth
+
+## Calculate optimal threshold with Youden's index
+rocboth <- roc(TBimputedtest$trtfailure, predictionboth)
+besTBimputedoth <- coords(rocboth, "b", ret = "threshold", best.method = "youden")
+besTBimputedoth
+
+## Prediction based on misclassification error
+predictionbothyouden01 <- ifelse(predictionboth > besTBimputedoth, 1, 0)
+predictionbothyouden01 <- as.factor(predictionbothyouden01)
+confusionmatrix <- table(predictionbothyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationbothyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationbothyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitybothyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitybothyouden
+specificitybothyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitybothyouden
+ppvbothyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvbothyouden
+npvbothyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvbothyouden
+```
+
+
+
+
+
+Lasso
+-----
+```{r}
+## Prediction based on area under the curve
+## Create the x matrix
+x <- model.matrix(trtfailure ~ ., data = TBimputedtest)[ , -which(names(TBimputedtest) %in% "trtfailure")]
+## Create the y vector
+y <- TBimputedtest$trtfailure
+## Lasso predictions
+predictionlasso <- predict(lasso, newx = x, type = "response")
+predictionlasso <- as.numeric(predictionlasso)
+## Area under the curve
+auclasso <- auc(TBimputedtest$trtfailure, predictionlasso)
+auclasso
+cilasso <- ci.auc(TBimputedtest$trtfailure, predictionlasso)
+cilasso
+
+## Prediction based on misclassification error
+predictionlasso01 <- ifelse(predictionlasso > 0.5, 1, 0)
+predictionlasso01 <- as.factor(predictionlasso01)
+confusionmatrix <- table(predictionlasso01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationlasso <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationlasso
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitylasso <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitylasso
+specificitylasso <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitylasso
+ppvlasso <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvlasso
+npvlasso <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvlasso
+
+## Calculate optimal threshold with Youden's index
+roclasso <- roc(TBimputedtest$trtfailure, predictionlasso)
+bestlasso <- coords(roclasso, "b", ret = "threshold", best.method = "youden")
+bestlasso
+
+## Prediction based on misclassification error
+predictionlassoyouden01 <- ifelse(predictionlasso > bestlasso, 1, 0)
+predictionlassoyouden01 <- as.factor(predictionlassoyouden01)
+confusionmatrix <- table(predictionlassoyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationlassoyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationlassoyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitylassoyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitylassoyouden
+specificitylassoyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitylassoyouden
+ppvlassoyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvlassoyouden
+npvlassoyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvlassoyouden
+```
+
+
+
+
+
+Random Forests
+--------------
+```{r}
+## Prediction based on area under the curve
+predictionforest <- predict(forest, type = "prob", newdata = 
+                              TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])[ , 2]
+aucforest <- auc(TBimputedtest$trtfailure, predictionforest)
+aucforest
+ciforest <- ci.auc(TBimputedtest$trtfailure, predictionforest)
+ciforest
+
+## Prediction based on misclassification error
+predictionforest01 <- predict(forest, 
+                              newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])
+confusionmatrix <- table(predictionforest01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationforest <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforest
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforest <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforest
+specificityforest <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforest
+ppvforest <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforest
+npvforest <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforest
+
+## Calculate optimal threshold with Youden's index
+rocforest <- roc(TBimputedtest$trtfailure, predictionforest)
+bestforest <- coords(rocforest, "b", ret = "threshold", best.method = "youden")
+bestforest
+
+## Prediction based on misclassification error
+predictionforestyouden01 <- ifelse(predictionforest > bestforest, 1, 0)
+predictionforestyouden01 <- as.factor(predictionforestyouden01)
+confusionmatrix <- table(predictionforestyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationforestyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationforestyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivityforestyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivityforestyouden
+specificityforestyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificityforestyouden
+ppvforestyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvforestyouden
+npvforestyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvforestyouden
+```
+
+
+
+
+Support vector machines: linear kernel
+--------------------------------------
+```{r}
+## Prediction based on area under the curve
+predictionsvmlinear <- predict(svmlinear, probability = TRUE, 
+                               newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")]) 
+predictionsvmlinear <- attr(predictionsvmlinear, "probabilities")[ , 2]
+aucsvmlinear <- auc(TBimputedtest$trtfailure, predictionsvmlinear)
+aucsvmlinear
+cisvmlinear <- ci.auc(TBimputedtest$trtfailure, predictionsvmlinear)
+cisvmlinear
+
+## Prediction based on misclassification error
+predictionsvmlinear01 <- predict(svmlinear, 
+                                 newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])
+confusionmatrix <- table(predictionsvmlinear01, TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationsvmlinear <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmlinear
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmlinear <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmlinear
+specificitysvmlinear <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmlinear
+ppvsvmlinear <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmlinear
+npvsvmlinear <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmlinear
+
+## Calculate optimal threshold with Youden's index
+rocsvmlinear <- roc(TBimputedtest$trtfailure, predictionsvmlinear)
+bestsvmlinear <- coords(rocsvmlinear, "b", ret = "threshold", best.method = "youden")
+bestsvmlinear
+
+## Prediction based on misclassification error
+predictionsvmlinearyouden01 <- ifelse(predictionsvmlinear > bestsvmlinear, 1, 0)
+predictionsvmlinearyouden01 <- as.factor(predictionsvmlinearyouden01)
+confusionmatrix <- table(predictionsvmlinearyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationsvmlinearyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmlinearyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmlinearyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmlinearyouden
+specificitysvmlinearyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmlinearyouden
+ppvsvmlinearyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmlinearyouden
+npvsvmlinearyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmlinearyouden
+```
+
+
+
+
+Support vector machines: polynomial kernel
+------------------------------------------
+```{r}
+## Prediction based on area under the curve
+predictionsvmpolynomial <- predict(svmpolynomial, 
+                                   probability = TRUE, 
+                                   newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")]) 
+predictionsvmpolynomial <- attr(predictionsvmpolynomial, "probabilities")[ , 2]
+aucsvmpolynomial <- auc(TBimputedtest$trtfailure, predictionsvmpolynomial)
+aucsvmpolynomial
+cisvmpolynomial <- ci.auc(TBimputedtest$trtfailure, predictionsvmpolynomial)
+cisvmpolynomial
+
+## Prediction based on misclassification error
+predictionsvmpolynomial01 <- predict(svmpolynomial, 
+                                     newdata = TBimputedtest[ , - which(names(TBimputedtest) == "trtfailure")])
+confusionmatrix <- table(predictionsvmpolynomial01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationsvmpolynomial <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmpolynomial
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmpolynomial <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmpolynomial
+specificitysvmpolynomial <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmpolynomial
+ppvsvmpolynomial <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmpolynomial
+npvsvmpolynomial <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmpolynomial
+
+## Calculate optimal threshold with Youden's index
+rocsvmpolynomial <- roc(TBimputedtest$trtfailure, predictionsvmpolynomial)
+bestsvmpolynomial <- coords(rocsvmpolynomial, "b", ret = "threshold", best.method = "youden")
+bestsvmpolynomial
+
+## Prediction based on misclassification error
+predictionsvmpolynomialyouden01 <- ifelse(predictionsvmpolynomial > bestsvmpolynomial, 1, 0)
+predictionsvmpolynomialyouden01 <- as.factor(predictionsvmpolynomialyouden01)
+confusionmatrix <- table(predictionsvmpolynomialyouden01, 
+                         TBimputedtest[ , which(names(TBimputedtest) == "trtfailure")])
+misclassificationsvmpolynomialyouden <- (confusionmatrix[2, 1] + confusionmatrix[1, 2]) / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2] + confusionmatrix[2, 1] + confusionmatrix[2, 2])
+misclassificationsvmpolynomialyouden
+
+## Prediction based on sensitivity, specificity, positive predictive value, 
+##and negative predictive value
+sensitivitysvmpolynomialyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[1, 2] + confusionmatrix[2, 2])
+sensitivitysvmpolynomialyouden
+specificitysvmpolynomialyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[2, 1])
+specificitysvmpolynomialyouden
+ppvsvmpolynomialyouden <- confusionmatrix[2, 2] / 
+  (confusionmatrix[2, 1] + confusionmatrix[2, 2])
+ppvsvmpolynomialyouden
+npvsvmpolynomialyouden <- confusionmatrix[1, 1] / 
+  (confusionmatrix[1, 1] + confusionmatrix[1, 2])
+npvsvmpolynomialyouden
+```
+
+
+
+
+FINAL RESULTS
+--------------------------------------
+```{r}
+## Model names
+modelnames <- c("Forward", 
+                "Backward", "Forward and backward", "Lasso", "Random Forest", 
+                "SVM linear", "SVM polynomial")
+
+## Outcome names
+outcomenames <- c("AUC", "AUC 95%CI: lower", "AUC 95%CI: upper", 
+                  "Misclassification", 
+                  "Sensitivity", "Specificity", "PPV", "NPV")
+
+## Model area under the curve
+modelauc <- c(aucforward, 
+              aucbackward, aucboth, auclasso, aucforest, aucsvmlinear, 
+              aucsvmpolynomial)
+
+## Model confidence interval for area under the curve: lower
+modelcilower <- c(ciforward[1], cibackward[1], ciboth[1], cilasso[1], ciforest[1], 
+                  cisvmlinear[1], cisvmpolynomial[1])
+
+## Model confidence interval for area under the curve: upper
+modelciupper <- c(ciforward[3], cibackward[3], ciboth[3], cilasso[3], ciforest[3], 
+                  cisvmlinear[3], cisvmpolynomial[3])
+
+
+## Model misclassification error
+modelmisclassification <- c(misclassificationforward, misclassificationbackward, 
+                            misclassificationboth, misclassificationlasso, 
+                            misclassificationforest, misclassificationsvmlinear, 
+                            misclassificationsvmpolynomial)
+
+## Model sensitivity
+modelsensitivity <- c(sensitivityforward, sensitivitybackward, sensitivityboth, 
+                      sensitivitylasso, sensitivityforest, sensitivitysvmlinear, 
+                      sensitivitysvmpolynomial)
+
+## Model specificity
+modelspecificity <- c(specificityforward, 
+                      specificitybackward, specificityboth, specificitylasso, specificityforest, 
+                      specificitysvmlinear, specificitysvmpolynomial)
+
+## Model positive predictive value
+modelppv <- c(ppvforward, ppvbackward, ppvboth, ppvlasso, 
+              ppvforest, ppvsvmlinear, ppvsvmpolynomial)
+
+## Negative predictive value
+modelnpv <- c(npvforward, npvbackward, npvboth, npvlasso, 
+              npvforest, npvsvmlinear, npvsvmpolynomial)
+
+## Final table
+results <- data.frame(modelauc, modelcilower, modelciupper,  
+                      modelmisclassification, modelsensitivity, modelspecificity, modelppv,
+                      modelnpv)
+rownames(results) <- modelnames
+colnames(results) <- outcomenames
+results
+
+## For improved graphs (remove dead space left & right)
+par(pty="s")
+
+## Area under the curve graph individual
+plot.roc(roc(TBimputedtest$trtfailure, predictionforward), col = "blue", lwd = 3, 
+         main = "Comparison of AUC for the different models", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionbackward), col = "aquamarine4", lwd = 3, 
+         main = "AUC for the backward selection model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionboth), col = "darkolivegreen", lwd = 3, 
+         main = "AUC for the forward and backward selection model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionlasso), col = "orange", lwd = 3, 
+         main = "AUC for the Lasso model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionforest), col = "darkgreen", lwd = 3, 
+         main = "AUC for the random forest model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionsvmlinear), col = "red", lwd = 3, 
+         main = "AUC for the SVM linear model", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionsvmpolynomial), col = "purple", lwd = 3, 
+         main = "AUC for the SVM polynomial model", xlab = "1 - Specificity", legacy.axes = TRUE)
+
+
+par(pty="s")
+plot.roc(roc(TBimputedtest$trtfailure, predictionforward), col = "blue", lwd = 3, 
+         main = "Comparison of AUC for the different models", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(roc(TBimputedtest$trtfailure, predictionbackward), add = TRUE, 
+         col = "aquamarine4", lwd = 3)
+plot.roc(roc(TBimputedtest$trtfailure, predictionboth), add = TRUE, 
+         col = "darkolivegreen", lwd = 3)
+plot.roc(roc(TBimputedtest$trtfailure, predictionlasso), add = TRUE, 
+         col = "orange", lwd = 3)
+plot.roc(roc(TBimputedtest$trtfailure, predictionforest), add = TRUE, 
+         col = "darkgreen", lwd = 3)
+plot.roc(roc(TBimputedtest$trtfailure, predictionsvmlinear), add = TRUE, 
+         col = "red", lwd = 3)
+plot.roc(roc(TBimputedtest$trtfailure, predictionsvmpolynomial), add = TRUE, 
+         col = "purple", lwd = 3)
+legend(x = "bottomright", legend = c("forward", "backward", "backward / forward", 
+                                     "lasso", "svm linear", "random forest", 
+                                     "svm polynomial"), 
+       lty = c(1, 1, 1, 1, 1, 1, 1), lwd = c(3, 3, 3, 3, 3, 3, 3),
+       col = c("blue", "aquamarine4", "darkolivegreen", "orange", "red", "darkgreen", "purple"))
+
+
+
+
+## Area under the curve graph smoothed
+par(pty="s")
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionforward)), col = "blue", lwd = 3, 
+         main = "Comparison of AUC for the different models", xlab = "1 - Specificity", legacy.axes = TRUE)
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionbackward)), add = TRUE, 
+         col = "aquamarine4", lwd = 3)
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionboth)), add = TRUE, 
+         col = "darkolivegreen", lwd = 3)
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionlasso)), add = TRUE, 
+         col = "orange", lwd = 3)
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionforest)), add = TRUE, 
+         col = "darkgreen", lwd = 3)
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionsvmlinear)), add = TRUE, 
+         col = "red", lwd = 3)
+plot.roc(smooth(roc(TBimputedtest$trtfailure, predictionsvmpolynomial)), add = TRUE, 
+         col = "purple", lwd = 3)
+legend(x = "bottomright", legend = c("forward", "backward", "backward / forward", 
+                                     "lasso", "svm linear", "random forest", 
+                                     "svm polynomial"), 
+       lty = c(1, 1, 1, 1, 1, 1, 1), lwd = c(3, 3, 3, 3, 3, 3, 3),
+       col = c("blue", "aquamarine4", "darkolivegreen", "orange", "red", "darkgreen", "purple"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

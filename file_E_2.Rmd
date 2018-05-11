@@ -1,0 +1,210 @@
+---
+title: "Data Viz/Table1"
+author: "David Sasson"
+date: "5/11/2018"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+# knitr::opts_knit$set(root.dir = "~/Desktop/MIT/HST936/Project/")
+packs <- c("xlsx", "dplyr", "ggplot2", "gmodels", "ggcorrplot", "caret", "caTools", "gridExtra", "ggthemes", "grid", "ggpubr", "tableone", "knitr", "cowplot")
+lapply(packs, require, character.only = TRUE)
+set.seed(123)
+```
+
+```{r reading_file}
+TB <- read.xlsx("data/tb_data.xlsx", sheetIndex = 1, stringsAsFactors = FALSE, header = TRUE)
+```
+
+```{r def_outcome}
+# unique(TB$outcome) -- ignoring notreported and unknown
+TB$trtfailure[TB$outcome == "completed" | TB$outcome == "cured" | TB$outcome == "still_on_treatment"] <- 0
+TB$trtfailure[TB$outcome == "failure" | TB$outcome == "death" | TB$outcome == "default" | TB$outcome == "died"] <- 1
+TB$trtfailure <- as.factor(TB$trtfailure)
+
+# Remove duplicate entries from the same patient
+TB <- TB[!duplicated(TB$patient_id), ]
+```
+
+
+
+
+```{r data cleaning}
+# Country
+TB$country <- as.factor(TB$country)
+
+# Age
+TB$age_of_onset <- as.numeric(TB$age_of_onset)
+
+# Sex
+TB$gender <- as.factor(TB$gender)
+
+# Education
+TB$education <- as.factor(TB$education)
+
+# Employment
+TB$employment <- as.factor(TB$employment)
+
+# Number of daily contacts
+TB$number_of_daily_contacts <- as.numeric(TB$number_of_daily_contacts)
+
+# Type of resistance
+TB$type_of_resistance <- as.factor(TB$type_of_resistance)
+
+# BMI
+TB$bmi <- as.numeric(TB$bmi)
+
+# Localization of the lesion in the brain
+TB$lung_localization <- as.factor(TB$lung_localization)
+
+# Dissemination
+TB$dissemination <- as.factor(TB$dissemination)
+
+# Lung cavity size
+TB$lungcavity_size <- as.factor(TB$lungcavity_size)
+
+# Shadow pattern
+TB$shadow_pattern <- as.factor(TB$shadow_pattern)
+
+# Pneumothorax
+TB$pneumothorax <- as.factor(TB$pneumothorax)
+
+# Pleuritis
+TB$plevritis <- as.factor(TB$plevritis)
+
+# Node calcinosis
+TB$nodicalcinatum <- as.factor(TB$nodicalcinatum)
+
+# Caverna
+TB$totalcavernum <- as.factor(TB$totalcavernum)
+
+# Social risk factors
+TB$social_risk_factors <- as.factor(TB$social_risk_factors)
+
+# Treatment 
+TB$regimen_drug <- as.factor(TB$regimen_drug)
+
+TB$number_of_children <- as.numeric(TB$number_of_children)
+TB$x_ray_count <- as.numeric(TB$x_ray_count)
+TB$ct_count <- as.numeric(TB$ct_count)
+TB$registration_date <- as.Date(TB$registration_date)
+
+# check results
+# sapply(TB, class)
+```
+
+
+
+
+
+
+```{r age}
+ggplot(TB, aes(age_of_onset, fill=gender)) + 
+  geom_histogram(binwidth=2) +
+  facet_wrap(~country, nrow = 2) + 
+  xlab("Age of Onset")+
+  ylab("Count") + 
+  theme_pubr()+ guides(fill=guide_legend(title="")) + 
+  scale_fill_manual(values=c("indianred1", "steelblue"))
+```
+
+
+
+```{r outcome}
+ggplot(TB, aes(x = outcome, y = type_of_resistance)) +
+  geom_count(col="indianred1") + 
+  scale_size_area() +
+  coord_flip()  + 
+  ylab("Type of Resistance") + 
+  xlab("Outcome") + 
+  theme_pubr() 
+```
+
+
+
+```{r missing data}
+g <-ggplot(TB, aes(x = outcome, fill = genomic_data_exists)) +
+  geom_bar() + 
+  coord_flip() + 
+  ggtitle("Genomic Data")+
+  guides(fill=FALSE) + ylab("") + xlab("") + 
+  theme_pubr() + 
+  scale_fill_manual(values=c("indianred1", "steelblue"))
+
+x <- ggplot(TB, aes(x = outcome, fill = x_ray_exists)) +
+  geom_bar() + 
+  coord_flip() + 
+  ggtitle("X-Ray Data") +
+  guides(fill=FALSE)+ ylab("")+  
+  theme_pubr() + 
+  scale_fill_manual(values=c("indianred1", "steelblue"))
+
+
+c <- ggplot(TB, aes(x = outcome, fill=ct_exists)) +
+  geom_bar() + 
+  coord_flip()+ 
+  guides(fill=FALSE)+ 
+  ggtitle("CT Scan Data")  + xlab("")+ 
+  theme_pubr() + 
+  scale_fill_manual(values=c("indianred1", "steelblue"))
+
+plot_grid(g, x, c, ncol=1) 
+
+```
+
+
+
+
+```{r}
+ggplot(TB) +
+  geom_bar(aes(outcome), fill="indianred1") + 
+  xlab("Outcome") +
+  ylab("Count") +
+  coord_flip() + 
+  facet_wrap(~country)  + 
+  theme_pubr()
+```
+
+
+```{r tableone}
+# smaller table
+listVars <- c("gender", "bmi","age_of_onset" , "country", "social_risk_factors","education", "regimen_drug")
+
+table1 <- CreateTableOne(vars = listVars, data = TB,  strata = c("trtfailure"), test=F)
+
+table1  %>% print(
+  printToggle      = FALSE,
+  showAllLevels    = TRUE,
+  cramVars         = "kon"
+) %>%
+{data.frame(
+  variable_name   = gsub(" ", "&nbsp;", rownames(.), fixed = TRUE), .,
+  row.names        = NULL,
+  check.names      = FALSE,
+  stringsAsFactors = FALSE)} %>% kable()
+```
+
+
+
+```{r appendix}
+# all vars for appendix
+allVars <- c("age_of_onset", "gender", "country", "affect_pleura", "bmi", "employment", "totalcavernum", "nodicalcinatum", "type_of_resistance", "lung_capacity_decrease","lungcavity_size", "pneumothorax", "dissemination", "regimen_drug", "shadow_pattern", "ct_count", "microscopy", "number_of_daily_contacts", "lung_localization", "x_ray_count", "process_prevalence","plevritis", "social_risk_factors","education", "regimen_drug")
+
+table1.full <- CreateTableOne(vars = allVars, data = TB, strata = c("trtfailure"), test=F)
+
+table1.full  %>% print(
+  printToggle      = FALSE,
+  showAllLevels    = TRUE,
+  cramVars         = "kon"
+) %>%
+{data.frame(
+  variable_name   = gsub(" ", "&nbsp;", rownames(.), fixed = TRUE), .,
+  row.names        = NULL,
+  check.names      = FALSE,
+  stringsAsFactors = FALSE)} %>% kable()
+
+```
+
